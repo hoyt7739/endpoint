@@ -1,0 +1,361 @@
+#include "bluetooth.h"
+#include <fcntl.h>
+#include <gio/gio.h>
+#include <gio/gunixfdmessage.h>
+#include <future>
+
+const gchar* const AGENT_PATH = "/org/bluez/k_agent";
+
+const gchar* const PROFILE_PATH = "/org/bluez/k_profile";
+
+const gchar* const AGENT_XML = R"(
+<node name="/org/bluez/k_agent">
+  <interface name="org.bluez.Agent1">
+    <method name="RequestPinCode">
+      <arg type="o" name="device" direction="in"/>
+      <arg type="s" name="pincode" direction="out"/>
+    </method>
+    <method name="DisplayPinCode">
+      <arg type="o" name="device" direction="in"/>
+      <arg type="s" name="pincode" direction="in"/>
+    </method>
+    <method name="RequestPasskey">
+      <arg type="o" name="device" direction="in"/>
+      <arg type="u" name="passkey" direction="out"/>
+    </method>
+    <method name="DisplayPasskey">
+      <arg type="o" name="device" direction="in"/>
+      <arg type="u" name="passkey" direction="in"/>
+      <arg type="q" name="entered" direction="in"/>
+    </method>
+    <method name="RequestConfirmation">
+      <arg type="o" name="device" direction="in"/>
+      <arg type="u" name="passkey" direction="in"/>
+    </method>
+    <method name="RequestAuthorization">
+      <arg type="o" name="device" direction="in"/>
+    </method>
+    <method name="AuthorizeService">
+      <arg type="o" name="device" direction="in"/>
+      <arg type="s" name="uuid" direction="in"/>
+    </method>
+    <method name="Cancel"/>
+    <method name="Release"/>
+  </interface>
+</node>
+)";
+
+const gchar* const PROFILE_XML = R"(
+<node name="/org/bluez/k_profile">
+  <interface name="org.bluez.Profile1">
+    <method name="NewConnection">
+      <arg name="device" type="o" direction="in"/>
+      <arg name="fd" type="h" direction="in"/>
+      <arg name="fd_properties" type="a{sv}" direction="in"/>
+    </method>
+    <method name="RequestDisconnection">
+      <arg name="device" type="o" direction="in"/>
+    </method>
+    <method name="Release"/>
+  </interface>
+</node>
+)";
+
+const guint16 DEFAULT_CHANNEL = 22;
+
+struct bluetooth_data {
+    GDBusConnection* dbus = nullptr;
+    guint agent_id = 0;
+    guint profile_id = 0;
+    endpoint::connected_notify on_connected;
+    bool listening = false;
+    int fd = -1;
+    int fd_flags = 0;
+    std::string remote_path;
+    std::string& remote_info;
+    GMainLoop* main_loop = nullptr;
+    std::future<void> main_loop_future;
+
+    bluetooth_data(std::string& _remote_info) : remote_info(_remote_info) {}
+};
+
+static bool dbus_call(GDBusConnection* dbus,
+                      const gchar* object_path,
+                      const gchar* interface_name,
+                      const gchar* method_name,
+                      GVariant* parameters = nullptr,
+                      GVariant** result = nullptr,
+                      GError** error = nullptr) {
+    GVariant* value = g_dbus_connection_call_sync(dbus,
+                                                  "org.bluez",
+                                                  object_path,
+                                                  interface_name,
+                                                  method_name,
+                                                  parameters,
+                                                  nullptr,
+                                                  G_DBUS_CALL_FLAGS_NONE,
+                                                  -1,
+                                                  nullptr,
+                                                  error);
+
+    if (result) {
+        *result = value;
+    } else if (value) {
+        g_variant_unref(value);
+    }
+
+    return value;
+}
+
+static void dbus_callback(GDBusConnection* dbus,
+                          const gchar* sender,
+                          const gchar* object_path,
+                          const gchar* interface_name,
+                          const gchar* method_name,
+                          GVariant* parameters,
+                          GDBusMethodInvocation* invocation,
+                          gpointer user_data) {
+    bluetooth_data* data = reinterpret_cast<bluetooth_data*>(user_data);
+
+    if (0 == strcmp(interface_name, "org.bluez.Agent1")) {
+        if (0 == strcmp(method_name, "RequestConfirmation")) {
+            g_dbus_method_invocation_return_value(invocation, nullptr);
+        }
+    } else if (0 == strcmp(interface_name, "org.bluez.Profile1")) {
+        if (0 == strcmp(method_name, "NewConnection")) {
+            if (0 <= data->fd) {
+                g_dbus_method_invocation_return_error(invocation, G_DBUS_ERROR, G_DBUS_ERROR_FAILED, "fd exist");
+                return;
+            }
+
+            gchar* remote_path = nullptr;
+            gint fd_index = -1;
+            g_variant_get(parameters, "(oha{sv})", &remote_path, &fd_index);
+
+            GUnixFDList* fd_list = g_dbus_message_get_unix_fd_list(g_dbus_method_invocation_get_message(invocation));
+            data->fd = g_unix_fd_list_get(fd_list, fd_index, nullptr);
+            if (data->fd < 0) {
+                g_dbus_method_invocation_return_error(invocation, G_DBUS_ERROR, G_DBUS_ERROR_FAILED, "fd invalid");
+                return;
+            }
+
+            data->fd_flags = fcntl(data->fd, F_GETFL);
+            fcntl(data->fd, F_SETFL, data->fd_flags & ~O_NONBLOCK);
+
+            data->remote_path = remote_path;
+            data->remote_info.clear();
+            GVariant* parames = g_variant_new("(ss)", "org.bluez.Device1", "Address");
+            GVariant* result = nullptr;
+            if (dbus_call(dbus, remote_path, "org.freedesktop.DBus.Properties", "Get", parames, &result)) {
+                GVariant* value = nullptr;
+                g_variant_get(result, "(v)", &value);
+                data->remote_info = g_variant_get_string(value, nullptr);
+                g_variant_unref(value);
+                g_variant_unref(result);
+            }
+
+            g_dbus_method_invocation_return_value(invocation, nullptr);
+
+            if (data->on_connected) {
+                data->on_connected();
+            }
+        }
+    }
+}
+
+static guint dbus_register(GDBusConnection* dbus,
+                           const gchar* object_path,
+                           const gchar* xml,
+                           gpointer user_data) {
+    GDBusNodeInfo* node_info = g_dbus_node_info_new_for_xml(xml, nullptr);
+    if (!node_info) {
+        return 0;
+    }
+
+    GDBusInterfaceVTable vtable = {dbus_callback};
+    guint id = g_dbus_connection_register_object(dbus,
+                                                 object_path,
+                                                 node_info->interfaces[0],
+                                                 &vtable,
+                                                 user_data,
+                                                 nullptr,
+                                                 nullptr);
+
+    g_dbus_node_info_unref(node_info);
+
+    return id;
+}
+
+static void dbus_unregister(GDBusConnection* dbus, guint id) {
+    g_dbus_connection_unregister_object(dbus, id);
+}
+
+bluetooth::bluetooth(const std::string& info) : endpoint(info) {
+    m_data = new bluetooth_data(m_remote_info);
+}
+
+bluetooth::~bluetooth() {
+    close();
+    delete m_data;
+}
+
+bool bluetooth::listen(connected_notify notify) {
+    m_data->on_connected = notify;
+
+    if (!init_service()) {
+        close();
+        return false;
+    }
+
+    m_data->main_loop_future = std::async(std::launch::async, [this] {
+        m_data->main_loop = g_main_loop_new(nullptr, false);
+        g_main_loop_run(m_data->main_loop);
+    });
+
+    m_data->listening = true;
+
+    return true;
+}
+
+bool bluetooth::connect(const std::string& remote_info, connected_notify notify) {
+    // todo
+    return false;
+}
+
+bool bluetooth::is_listening() const {
+    return m_data->listening;
+}
+
+bool bluetooth::is_connected() const {
+    return 0 <= m_data->fd;
+}
+
+void bluetooth::disconnect() {
+    if (is_connected()) {
+        fcntl(m_data->fd, F_SETFL, m_data->fd_flags);
+        dbus_call(m_data->dbus, m_data->remote_path.c_str(), "org.bluez.Device1", "Disconnect");
+        m_data->fd = -1;
+    }
+}
+
+void bluetooth::close() {
+    disconnect();
+    uninit_service();
+
+    m_data->listening = false;
+
+    if (m_data->main_loop) {
+        g_main_loop_quit(m_data->main_loop);
+        g_main_loop_unref(m_data->main_loop);
+        m_data->main_loop = nullptr;
+    }
+}
+
+int bluetooth::send(const char* buffer, int size) {
+    if (!is_connected()) {
+        return 0;
+    }
+
+    return write(m_data->fd, buffer, size);
+}
+
+int bluetooth::recv(char* buffer, int size) {
+    if (!is_connected()) {
+        return 0;
+    }
+
+    int res = read(m_data->fd, buffer, size);
+    if (res <= 0) {
+        disconnect();
+    }
+
+    return res;
+}
+
+bool bluetooth::init_service() {
+    m_data->dbus = g_bus_get_sync(G_BUS_TYPE_SYSTEM, nullptr, nullptr);
+    if (!m_data->dbus) {
+        uninit_service();
+        return false;
+    }
+
+    GVariant* parames = g_variant_new("(ss)", "org.bluez.Adapter1", "Address");
+    GVariant* result = nullptr;
+    if (!dbus_call(m_data->dbus, "/org/bluez/hci0", "org.freedesktop.DBus.Properties", "Get", parames, &result)) {
+        uninit_service();
+        return false;
+    }
+
+    GVariant* value = nullptr;
+    g_variant_get(result, "(v)", &value);
+    m_info = g_variant_get_string(value, nullptr);
+    g_variant_unref(value);
+    g_variant_unref(result);
+
+    m_data->agent_id = dbus_register(m_data->dbus, AGENT_PATH, AGENT_XML, m_data);
+    if (!m_data->agent_id) {
+        uninit_service();
+        return false;
+    }
+
+    parames = g_variant_new("(os)", AGENT_PATH, "KeyboardDisplay");
+    if (!dbus_call(m_data->dbus, "/org/bluez", "org.bluez.AgentManager1", "RegisterAgent", parames)) {
+        uninit_service();
+        return false;
+    }
+
+    parames = g_variant_new("(o)", AGENT_PATH);
+    if (!dbus_call(m_data->dbus, "/org/bluez", "org.bluez.AgentManager1", "RequestDefaultAgent", parames)) {
+        uninit_service();
+        return false;
+    }
+
+    m_data->profile_id = dbus_register(m_data->dbus, PROFILE_PATH, PROFILE_XML, m_data);
+    if (!m_data->profile_id) {
+        uninit_service();
+        return false;
+    }
+
+    GVariantBuilder builder;
+    g_variant_builder_init(&builder, G_VARIANT_TYPE("(osa{sv})"));
+    g_variant_builder_add(&builder, "o", PROFILE_PATH);
+    g_variant_builder_add(&builder, "s", "00001101-0000-1000-8000-00805f9b34fb");
+    g_variant_builder_open(&builder, G_VARIANT_TYPE("a{sv}"));
+    g_variant_builder_add(&builder, "{sv}", "Name", g_variant_new_string("Serial Port"));
+    g_variant_builder_add(&builder, "{sv}", "Role", g_variant_new_string("server"));
+    g_variant_builder_add(&builder, "{sv}", "Channel", g_variant_new_uint16(DEFAULT_CHANNEL));
+    g_variant_builder_add(&builder, "{sv}", "RequireAuthorization", g_variant_new_boolean(FALSE));
+    g_variant_builder_add(&builder, "{sv}", "RequireAuthentication", g_variant_new_boolean(FALSE));
+    g_variant_builder_close(&builder);
+    parames = g_variant_builder_end(&builder);
+    if (!dbus_call(m_data->dbus, "/org/bluez", "org.bluez.ProfileManager1", "RegisterProfile", parames)) {
+        uninit_service();
+        return false;
+    }
+
+    dbus_call(m_data->dbus, "/org/bluez/hci0", "org.bluez.Adapter1", "StartDiscovery");
+
+    return true;
+}
+
+void bluetooth::uninit_service() {
+    if (m_data->profile_id) {
+        GVariant* parames = g_variant_new("(o)", PROFILE_PATH);
+        dbus_call(m_data->dbus, "/org/bluez", "org.bluez.ProfileManager1", "UnregisterProfile", parames);
+        dbus_unregister(m_data->dbus, m_data->profile_id);
+        m_data->profile_id = 0;
+    }
+
+    if (m_data->agent_id) {
+        GVariant* parames = g_variant_new("(o)", AGENT_PATH);
+        dbus_call(m_data->dbus, "/org/bluez", "org.bluez.AgentManager1", "UnregisterAgent", parames);
+        dbus_unregister(m_data->dbus, m_data->agent_id);
+        m_data->agent_id = 0;
+    }
+
+    if (m_data->dbus) {
+        dbus_call(m_data->dbus, "/org/bluez/hci0", "org.bluez.Adapter1", "StopDiscovery");
+        g_object_unref(m_data->dbus);
+        m_data->dbus = nullptr;
+    }
+}

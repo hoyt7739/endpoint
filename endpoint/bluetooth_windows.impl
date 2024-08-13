@@ -1,0 +1,219 @@
+#include "bluetooth.h"
+#include "socket.h"
+#include <ws2bth.h>
+#include <bluetoothapis.h>
+#include <future>
+
+const ULONG DEFAULT_PORT = 22;
+
+struct bluetooth_data {
+    HANDLE radio_handle = NULL;
+    HANDLE auth_handle = NULL;
+    BTH_ADDR address = 0;
+    socket_t listen_socket = INVALID_SOCKET;
+    socket_t connect_socket = INVALID_SOCKET;
+    std::future<void> listen_future;
+};
+
+static std::string get_info(BTH_ADDR address) {
+    unsigned char* ptr = reinterpret_cast<unsigned char*>(&address);
+    char buffer[32];
+    sprintf(buffer, "%02X:%02X:%02X:%02X:%02X:%02X", ptr[5], ptr[4], ptr[3], ptr[2], ptr[1], ptr[0]);
+    return buffer;
+}
+
+static BOOL CALLBACK auth_callback(LPVOID param, PBLUETOOTH_AUTHENTICATION_CALLBACK_PARAMS auth_params) {
+    BLUETOOTH_AUTHENTICATE_RESPONSE response;
+    response.bthAddressRemote = auth_params->deviceInfo.Address;
+    response.authMethod = auth_params->authenticationMethod;
+    response.numericCompInfo.NumericValue = auth_params->Numeric_Value;
+    response.negativeResponse = false;
+    return ERROR_SUCCESS == BluetoothSendAuthenticationResponseEx(param, &response);
+}
+
+static bool set_service(BTH_ADDR address, WSAESETSERVICEOP operation) {
+    SOCKADDR_BTH local_addr = {0};
+    local_addr.addressFamily = AF_BTH;
+    local_addr.btAddr = address;
+    local_addr.port = DEFAULT_PORT;
+
+    CSADDR_INFO addr_info = {{0}};
+    addr_info.LocalAddr.lpSockaddr = (LPSOCKADDR)&local_addr;
+    addr_info.LocalAddr.iSockaddrLength = sizeof(SOCKADDR_BTH);
+    addr_info.iSocketType = SOCK_STREAM;
+    addr_info.iProtocol = BTHPROTO_RFCOMM;
+
+    WSAQUERYSET query_set = {sizeof(WSAQUERYSET)};
+    query_set.lpszServiceInstanceName = (LPWSTR)L"Serial Port";
+    query_set.lpServiceClassId = (LPGUID)&SerialPortServiceClass_UUID;
+    query_set.dwNameSpace = NS_BTH;
+    query_set.dwNumberOfCsAddrs = 1;
+    query_set.lpcsaBuffer = &addr_info;
+    return 0 == WSASetService(&query_set, operation, 0);
+}
+
+bluetooth::bluetooth(const std::string& info) : endpoint(info), m_data(new bluetooth_data) {
+    socket_data::init();
+}
+
+bluetooth::~bluetooth() {
+    close();
+    delete m_data;
+}
+
+bool bluetooth::listen(connected_notify notify) {
+    if (!init_service()) {
+        close();
+        return false;
+    }
+
+    m_data->listen_socket = socket(AF_BTH, SOCK_STREAM, BTHPROTO_RFCOMM);
+    if (INVALID_SOCKET == m_data->listen_socket) {
+        close();
+        return false;
+    }
+
+    SOCKADDR_BTH local_addr = {0};
+    local_addr.addressFamily = AF_BTH;
+    local_addr.btAddr = m_data->address;
+    local_addr.port = DEFAULT_PORT;
+    if (0 != bind(m_data->listen_socket, (sockaddr*)&local_addr, sizeof(SOCKADDR_BTH))) {
+        close();
+        return false;
+    }
+
+    if (0 != ::listen(m_data->listen_socket, SOMAXCONN)) {
+        close();
+        return false;
+    }
+
+    m_data->listen_future = std::async(std::launch::async, [this, notify] {
+        SOCKADDR_BTH remote_addr = {0};
+        socklen_t addr_len = sizeof(SOCKADDR_BTH);
+        while (true) {
+            socket_t connect_socket = accept(m_data->listen_socket, (sockaddr*)&remote_addr, &addr_len);
+            if (INVALID_SOCKET == connect_socket) {
+                break;
+            }
+
+            if (is_connected()) {
+                closesocket(connect_socket);
+                continue;
+            }
+
+            m_data->connect_socket = connect_socket;
+            m_remote_info = get_info(remote_addr.btAddr);
+            if (notify) {
+                notify();
+            }
+        }
+    });
+
+    return true;
+}
+
+bool bluetooth::connect(const std::string& remote_info, connected_notify notify) {
+    // todo
+    return false;
+}
+
+bool bluetooth::is_listening() const {
+    return INVALID_SOCKET != m_data->listen_socket;
+}
+
+bool bluetooth::is_connected() const {
+    return INVALID_SOCKET != m_data->connect_socket;
+}
+
+void bluetooth::disconnect() {
+    if (is_connected()) {
+        closesocket(m_data->connect_socket);
+        m_data->connect_socket = INVALID_SOCKET;
+    }
+}
+
+void bluetooth::close() {
+    disconnect();
+
+    if (is_listening()) {
+        closesocket(m_data->listen_socket);
+        m_data->listen_socket = INVALID_SOCKET;
+    }
+
+    uninit_service();
+}
+
+int bluetooth::send(const char* buffer, int size) {
+    if (!is_connected()) {
+        return 0;
+    }
+
+    return ::send(m_data->connect_socket, buffer, size, 0);
+}
+
+int bluetooth::recv(char* buffer, int size) {
+    if (!is_connected()) {
+        return 0;
+    }
+
+    int res = ::recv(m_data->connect_socket, buffer, size, 0);
+    if (res <= 0) {
+        disconnect();
+    }
+
+    return res;
+}
+
+bool bluetooth::init_service() {
+    m_data->radio_handle = NULL;
+    BLUETOOTH_FIND_RADIO_PARAMS params = {sizeof(BLUETOOTH_FIND_RADIO_PARAMS)};
+    BluetoothFindRadioClose(BluetoothFindFirstRadio(&params, &m_data->radio_handle));
+    if (!m_data->radio_handle) {
+        uninit_service();
+        return false;
+    }
+
+    BLUETOOTH_RADIO_INFO radio_info = {sizeof(BLUETOOTH_RADIO_INFO)};
+    if (ERROR_SUCCESS != BluetoothGetRadioInfo(m_data->radio_handle, &radio_info)) {
+        uninit_service();
+        return false;
+    }
+
+    if (ERROR_SUCCESS !=
+        BluetoothRegisterForAuthenticationEx(NULL, &m_data->auth_handle, &auth_callback, m_data->radio_handle)) {
+        uninit_service();
+        return false;
+    }
+
+    m_data->address = radio_info.address.ullLong;
+    if (!set_service(m_data->address, RNRSERVICE_REGISTER)) {
+        uninit_service();
+        return false;
+    }
+
+    BluetoothEnableDiscovery(m_data->radio_handle, TRUE);
+    BluetoothEnableIncomingConnections(m_data->radio_handle, TRUE);
+
+    m_info = get_info(m_data->address);
+
+    return true;
+}
+
+void bluetooth::uninit_service() {
+    if (m_data->address) {
+        set_service(m_data->address, RNRSERVICE_DEREGISTER);
+        m_data->address = 0;
+    }
+
+    if (m_data->auth_handle) {
+        BluetoothUnregisterAuthentication(m_data->auth_handle);
+        m_data->auth_handle = NULL;
+    }
+
+    if (m_data->radio_handle) {
+        BluetoothEnableDiscovery(m_data->radio_handle, FALSE);
+        BluetoothEnableIncomingConnections(m_data->radio_handle, FALSE);
+        CloseHandle(m_data->radio_handle);
+        m_data->radio_handle = NULL;
+    }
+}
