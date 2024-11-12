@@ -15,15 +15,15 @@ public:
     using connected_notify = std::function<void()>;
 
 public:
-    static endpoint* create(endpoint_type type, const std::string& info = "");
+    static endpoint* create(endpoint_type type, const std::string& info = std::string());
     static void destroy(endpoint* ep);
 
 public:
-    explicit endpoint(const std::string& info = "") : m_info(info) {}
-    virtual ~endpoint() = default;
-
+    explicit endpoint(const std::string& info = std::string()) : m_info(info) {}
     endpoint(const endpoint&) = delete;
     endpoint(endpoint&&) = delete;
+    virtual ~endpoint() = default;
+
     endpoint& operator=(const endpoint&) = delete;
     endpoint& operator=(endpoint&&) = delete;
 

@@ -5,7 +5,7 @@
 
 class bluetooth : public endpoint {
 public:
-    explicit bluetooth(const std::string& info = "");
+    explicit bluetooth(const std::string& info = std::string());
     virtual ~bluetooth();
 
 public:
