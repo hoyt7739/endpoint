@@ -28,6 +28,8 @@ byte_queue::byte_queue(byte_queue&& other) noexcept
       m_end(other.m_end),
       m_exiting(false) {
     other.m_buffer = nullptr;
+    other.m_buffer_size = other.m_begin = other.m_end = 0;
+    other.m_exiting = false;
 }
 
 byte_queue::~byte_queue() {
@@ -36,10 +38,13 @@ byte_queue::~byte_queue() {
 
 byte_queue& byte_queue::operator=(const byte_queue& other) {
     if (this != &other) {
-        m_buffer_size = other.size();
+        if (m_buffer_size < other.size()) {
+            delete[] m_buffer;
+            m_buffer_size = other.size();
+            m_buffer = new char[m_buffer_size + 1];
+        }
         m_begin = 0;
         m_end = other.size();
-        m_buffer = new char[m_buffer_size + 1];
         memcpy(m_buffer, other.m_buffer + other.m_begin, other.size());
     }
 
@@ -49,9 +54,9 @@ byte_queue& byte_queue::operator=(const byte_queue& other) {
 byte_queue& byte_queue::operator=(byte_queue&& other) noexcept {
     if (this != &other) {
         std::swap(m_buffer, other.m_buffer);
-        m_buffer_size = other.m_buffer_size;
-        m_begin = other.m_begin;
-        m_end = other.m_end;
+        std::swap(m_buffer_size, other.m_buffer_size);
+        std::swap(m_begin, other.m_begin);
+        std::swap(m_end, other.m_end);
     }
 
     return *this;

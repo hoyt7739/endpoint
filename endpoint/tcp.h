@@ -5,7 +5,7 @@
 
 class tcp : public endpoint {
 public:
-    explicit tcp(const std::string& info = "");
+    explicit tcp(const std::string& info = std::string());
     virtual ~tcp();
 
 public:

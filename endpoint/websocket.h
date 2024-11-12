@@ -6,7 +6,7 @@
 
 class websocket : public endpoint {
 public:
-    explicit websocket(const std::string& info = "");
+    explicit websocket(const std::string& info = std::string());
     virtual ~websocket();
 
 public:

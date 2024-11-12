@@ -26,12 +26,12 @@ bool full_trans(data_t buffer, int size, func_t func) {
 
 endpoint* endpoint::create(endpoint_type type, const std::string& info) {
     switch (type) {
-        case BLUETOOTH:
-            return new bluetooth(info);
-        case TCP:
-            return new tcp(info);
-        case WEBSOCKET:
-            return new websocket(info);
+    case BLUETOOTH:
+        return new bluetooth(info);
+    case TCP:
+        return new tcp(info);
+    case WEBSOCKET:
+        return new websocket(info);
     }
 
     return nullptr;

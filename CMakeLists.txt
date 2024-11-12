@@ -23,8 +23,17 @@ aux_source_directory(endpoint SOURCES)
 add_library(${PROJECT_NAME} STATIC ${SOURCES})
 target_link_libraries(${PROJECT_NAME} PRIVATE ${LIBRARIES})
 
-add_executable(server sample/server.cpp)
-target_link_libraries(server PRIVATE ${PROJECT_NAME})
+add_executable(simple_server samples/simple/server.cpp)
+target_link_libraries(simple_server PRIVATE ${PROJECT_NAME})
 
-add_executable(client sample/client.cpp)
-target_link_libraries(client PRIVATE ${PROJECT_NAME})
+add_executable(simple_client samples/simple/client.cpp)
+target_link_libraries(simple_client PRIVATE ${PROJECT_NAME})
+
+aux_source_directory(samples/advance/commun COMMUN_SOURCES)
+add_executable(advance_server ${COMMUN_SOURCES} samples/advance/advance_server.cpp samples/advance/server.cpp)
+target_include_directories(advance_server PRIVATE samples/advance/commun)
+target_link_libraries(advance_server PRIVATE ${PROJECT_NAME})
+
+add_executable(advance_client ${COMMUN_SOURCES} samples/advance/advance_client.cpp samples/advance/client.cpp)
+target_include_directories(advance_client PRIVATE samples/advance/commun)
+target_link_libraries(advance_client PRIVATE ${PROJECT_NAME})
