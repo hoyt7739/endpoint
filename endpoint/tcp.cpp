@@ -49,7 +49,7 @@ tcp::~tcp() {
     delete m_data;
 }
 
-bool tcp::listen(connected_notify notify) {
+bool tcp::listen(const connected_notify& notify) {
     m_data->listen_socket = socket(AF_INET, SOCK_STREAM, 0);
     if (INVALID_SOCKET == m_data->listen_socket) {
         close();
@@ -99,7 +99,7 @@ bool tcp::listen(connected_notify notify) {
     return true;
 }
 
-bool tcp::connect(const std::string& remote_info, connected_notify notify) {
+bool tcp::connect(const std::string& remote_info, const connected_notify& notify) {
     m_data->connect_socket = socket(AF_INET, SOCK_STREAM, 0);
     if (INVALID_SOCKET == m_data->connect_socket) {
         disconnect();

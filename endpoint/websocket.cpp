@@ -32,7 +32,7 @@ websocket::~websocket() {
     delete m_data;
 }
 
-bool websocket::listen(connected_notify notify) {
+bool websocket::listen(const connected_notify& notify) {
     m_data->on_connected = notify;
 
     bool res = m_data->atcp->listen([this] {
@@ -44,7 +44,7 @@ bool websocket::listen(connected_notify notify) {
     return res;
 }
 
-bool websocket::connect(const std::string& remote_info, connected_notify notify) {
+bool websocket::connect(const std::string& remote_info, const connected_notify& notify) {
     m_data->on_connected = notify;
 
     bool res = m_data->atcp->connect(remote_info, [this, remote_info] {

@@ -17,9 +17,10 @@ public:
     byte_queue& operator=(const byte_queue& other);
     byte_queue& operator=(byte_queue&& other) noexcept;
 
-    int put(bytes_handler handler, int size);
+public:
+    int put(const bytes_handler& handler, int size);
     int put(const char* src, int size);
-    int take(bytes_handler handler, bool wait = true);
+    int take(const bytes_handler& handler, bool wait = true);
     int take(char* dest, int size, bool wait = true);
     int size() const;
     void exit();

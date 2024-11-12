@@ -5,12 +5,12 @@
 
 class bluetooth : public endpoint {
 public:
-    explicit bluetooth(const std::string& info = "");
+    explicit bluetooth(const std::string& info = std::string());
     virtual ~bluetooth();
 
 public:
-    virtual bool listen(connected_notify notify) override;
-    virtual bool connect(const std::string& remote_info, connected_notify notify) override;
+    virtual bool listen(const connected_notify& notify) override;
+    virtual bool connect(const std::string& remote_info, const connected_notify& notify) override;
     virtual bool is_listening() const override;
     virtual bool is_connected() const override;
     virtual void disconnect() override;

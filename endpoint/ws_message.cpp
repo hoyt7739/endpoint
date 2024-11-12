@@ -51,7 +51,7 @@ inline int unpack_http(const char* message, int size, line_info_t& line_info, he
     return (int)data.size();
 }
 
-int pack_handshake(const std::string& host, const std::string& key, pack_output output) {
+int pack_handshake(const std::string& host, const std::string& key, const pack_output& output) {
     if (host.empty() || key.empty() || !output) {
         return 0;
     }
@@ -75,7 +75,7 @@ int pack_handshake(const std::string& host, const std::string& key, pack_output 
     return size;
 }
 
-int unpack_handshake(const char* message, int size, unpack_handshake_output output) {
+int unpack_handshake(const char* message, int size, const unpack_handshake_output& output) {
     if (!output) {
         return 0;
     }
@@ -97,7 +97,7 @@ int unpack_handshake(const char* message, int size, unpack_handshake_output outp
     return res;
 }
 
-int pack_rhandshake(const std::string& key, pack_output output) {
+int pack_rhandshake(const std::string& key, const pack_output& output) {
     if (key.empty() || !output) {
         return 0;
     }
@@ -116,7 +116,7 @@ int pack_rhandshake(const std::string& key, pack_output output) {
     return size;
 }
 
-int unpack_rhandshake(const char* message, int size, const std::string& key, unpack_rhandshake_output output) {
+int unpack_rhandshake(const char* message, int size, const std::string& key, const unpack_rhandshake_output& output) {
     if (key.empty() || !output) {
         return 0;
     }
@@ -138,7 +138,7 @@ int unpack_rhandshake(const char* message, int size, const std::string& key, unp
     return res;
 }
 
-int pack_frame(ws_opcode opcode, bool mask, const char* payload, int size, pack_output output) {
+int pack_frame(ws_opcode opcode, bool mask, const char* payload, int size, const pack_output& output) {
     if (size < 0 || (0 < size && !payload) || !output) {
         return 0;
     }
@@ -190,7 +190,7 @@ int pack_frame(ws_opcode opcode, bool mask, const char* payload, int size, pack_
     return pos;
 }
 
-int unpack_frame(const char* message, int size, unpack_frame_output output) {
+int unpack_frame(const char* message, int size, const unpack_frame_output& output) {
     if (!message || size < 2 || !output) {
         return 0;
     }

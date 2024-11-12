@@ -199,7 +199,7 @@ bluetooth::~bluetooth() {
     delete m_data;
 }
 
-bool bluetooth::listen(connected_notify notify) {
+bool bluetooth::listen(const connected_notify& notify) {
     m_data->on_connected = notify;
 
     if (!init_service()) {
@@ -217,7 +217,7 @@ bool bluetooth::listen(connected_notify notify) {
     return true;
 }
 
-bool bluetooth::connect(const std::string& remote_info, connected_notify notify) {
+bool bluetooth::connect(const std::string& remote_info, const connected_notify& notify) {
     // todo
     return false;
 }

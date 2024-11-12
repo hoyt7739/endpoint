@@ -19,13 +19,13 @@ using unpack_handshake_output = std::function<void(bool accept, const std::strin
 using unpack_rhandshake_output = std::function<void(bool accept)>;
 using unpack_frame_output = std::function<void(ws_opcode opcode, const char* payload, int size)>;
 
-int pack_handshake(const std::string& host, const std::string& key, pack_output output);
-int unpack_handshake(const char* message, int size, unpack_handshake_output output);
+int pack_handshake(const std::string& host, const std::string& key, const pack_output& output);
+int unpack_handshake(const char* message, int size, const unpack_handshake_output& output);
 
-int pack_rhandshake(const std::string& key, pack_output output);
-int unpack_rhandshake(const char* message, int size, const std::string& key, unpack_rhandshake_output output);
+int pack_rhandshake(const std::string& key, const pack_output& output);
+int unpack_rhandshake(const char* message, int size, const std::string& key, const unpack_rhandshake_output& output);
 
-int pack_frame(ws_opcode opcode, bool mask, const char* payload, int size, pack_output output);
-int unpack_frame(const char* message, int size, unpack_frame_output output);
+int pack_frame(ws_opcode opcode, bool mask, const char* payload, int size, const pack_output& output);
+int unpack_frame(const char* message, int size, const unpack_frame_output& output);
 
 #endif

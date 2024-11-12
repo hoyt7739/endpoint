@@ -57,7 +57,7 @@ byte_queue& byte_queue::operator=(byte_queue&& other) noexcept {
     return *this;
 }
 
-int byte_queue::put(bytes_handler handler, int size) {
+int byte_queue::put(const bytes_handler& handler, int size) {
     if (!handler || size <= 0) {
         return 0;
     }
@@ -118,7 +118,7 @@ int byte_queue::put(const char* src, int size) {
     return put(handler, size);
 }
 
-int byte_queue::take(bytes_handler handler, bool wait) {
+int byte_queue::take(const bytes_handler& handler, bool wait) {
     if (!handler) {
         return 0;
     }

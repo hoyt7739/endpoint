@@ -3,7 +3,7 @@
 #include <iomanip>
 #include "endpoint.h"
 
-const int DATA_BUFFER_SIZE = 1024 * 10;
+const int DATA_BUFFER_SIZE = 4096;
 
 std::string data_to_hex(const char* data, int size) {
     std::stringstream hex_stream;
@@ -14,12 +14,12 @@ std::string data_to_hex(const char* data, int size) {
     return hex_stream.str();
 }
 
-int hex_to_data(const std::string& hex, char* data) {
+int hex_to_data(const std::string& hex, char* data, int size) {
     std::stringstream hex_stream(hex);
     hex_stream << std::hex;
     unsigned number = 0;
     int pos = 0;
-    while (hex_stream >> number && pos < DATA_BUFFER_SIZE) {
+    while (hex_stream >> number && pos < size) {
         data[pos++] = (char)number;
     }
     return pos;
@@ -34,12 +34,12 @@ void handle_send(endpoint* ep, bool loop) {
     int size = 0;
     std::string hex;
     do {
-        std::getline(std::cin, hex);
+        std::getline(std::cin >> std::ws, hex);
         if ("exit" == hex) {
             break;
         }
 
-        size = hex_to_data(hex, data);
+        size = hex_to_data(hex, data, DATA_BUFFER_SIZE);
         if (size <= 0) {
             continue;
         }
